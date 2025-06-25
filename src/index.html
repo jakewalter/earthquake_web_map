@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OGS Interactive Earthquake Map</title>
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+    <!-- Your JS files -->
+    <script src="js/map.js" defer></script>
+    <!-- Plotly.js -->
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script src="js/cross_section.js" defer></script>
+    <style>
+        /* Shift the Leaflet layers control left so it sits to the left of the zoom controls */
+        .leaflet-bottom.leaflet-right .leaflet-control-layers {
+            margin-right: 60px !important; /* Adjust as needed for your zoom control width + gap */
+            margin-bottom: -65px !important; /* Adjust as needed for your zoom control width + gap */
+
+        }
+    </style>
+</head>
+<body class="h-screen w-screen m-0 p-0 font-sans relative">
+    <!-- Map -->
+    <div id="map" class="absolute inset-0 z-0"></div>
+
+    <!-- Control Panel -->
+    <div id="control-panel" class="absolute top-3 left-3 z-10 bg-white/90 p-4 rounded-lg shadow-lg max-w-xs">
+        <h2 class="text-lg font-bold mb-3 text-gray-800 border-b pb-2">Filter Events</h2>
+        <div class="space-y-3">
+            <div>
+                <label for="start-date" class="block text-sm font-medium text-gray-700">Start Date</label>
+                <input type="date" id="start-date" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-1.5 text-sm">
+            </div>
+            <div>
+                <label for="end-date" class="block text-sm font-medium text-gray-700">End Date</label>
+                <input type="date" id="end-date" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-1.5 text-sm">
+            </div>
+            <div>
+                <label for="min-mag" class="block text-sm font-medium text-gray-700">Min Magnitude</label>
+                <input type="number" id="min-mag" step="0.1" value="0" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-1.5 text-sm">
+            </div>
+            <button id="update-map-btn" class="w-full bg-blue-600 text-white font-bold py-2 px-4 rounded-md hover:bg-blue-700 transition duration-300 mt-2">Update Map</button>
+        </div>
+
+        <!-- Data Citation Link and Box (move here) -->
+        <div id="data-citation-container" style="margin-top: 8px;">
+            <a href="#" id="data-citation-link" style="font-size: 13px;">Data Citation</a>
+            <div id="data-citation-box" style="display: none; margin-top: 6px; background: #f8f8f8; border: 1px solid #ccc; border-radius: 4px; padding: 8px; font-size: 13px;">
+                Walter, J. I., P. Ogwari, A. Thiel, F. Ferrer, I. Woelfel, J. C. Chang, A. P. Darold, and A. A. Holland (2020), The Oklahoma Geological Survey Statewide Seismic Network, Seismol. Res. Lett., 91 (2A): 611–621, doi:10.1785/0220190211.
+            </div>
+        </div>
+    </div>
+
+    <!-- Top-right stack: Legend, Tools, and Tabs -->
+    <div class="absolute top-3 right-3 z-10 flex flex-col items-end space-y-3 max-w-md">
+        <!-- Map Legend -->
+        <div id="maplegend" class="border-2 border-gray-400 bg-white/90 rounded-lg p-4 text-sm w-full">
+            <div class="font-bold mb-2">Legend</div>
+            <ul>
+                <li class="flex items-center mb-1">
+                    <span class="inline-block h-4 w-8 mr-2 border border-gray-400" style="background:red;opacity:0.7;"></span>
+                    Past 24 Hours
+                </li>
+                <li class="flex items-center mb-1">
+                    <span class="inline-block h-4 w-8 mr-2 border border-gray-400" style="background:orange;opacity:0.7;"></span>
+                    Past 7 Days
+                </li>
+                <li class="flex items-center mb-1">
+                    <span class="inline-block h-4 w-8 mr-2 border border-gray-400" style="background:yellow;opacity:0.7;"></span>
+                    Past 30 Days
+                </li>
+                <li class="flex items-center mb-1">
+                    <span class="inline-block mr-2" style="width:70px;height:32px;position:relative;">
+                        <svg width="70" height="32">
+                            <!-- Magnitude 1 -->
+                            <circle cx="15" cy="16" r="5.7" fill="gray" fill-opacity="0.7" stroke="black" stroke-width="1"/>
+                            <!-- Magnitude 2 -->
+                            <circle cx="35" cy="16" r="10.2" fill="gray" fill-opacity="0.7" stroke="black" stroke-width="1"/>
+                            <!-- Magnitude 3 -->
+                            <circle cx="58" cy="16" r="15.0" fill="gray" fill-opacity="0.7" stroke="black" stroke-width="1"/>
+                        </svg>
+                    </span>
+                    Magnitude 1-3
+                </li>
+                <li class="flex items-center mb-1">
+                    <span class="inline-block mr-2" style="width:18px;height:18px;">
+                        <svg width="18" height="18" viewBox="0 0 18 18">
+                            <polygon points="9,0 18,9 9,18 0,9" style="fill:gray;stroke:black;stroke-width:1;opacity:0.7;" />
+                        </svg>
+                    </span>
+                    Quarry Event
+                </li>
+            </ul>
+        </div>
+
+        <!-- Collapsible Tools Panel -->
+        <div class="w-full">
+            <button id="tools-toggle-btn" class="w-full bg-gray-700 text-white font-bold py-2 px-4 rounded-lg shadow hover:bg-gray-800 transition duration-300 flex items-center justify-between">
+                Tools
+                <svg id="tools-toggle-icon" class="w-4 h-4 ml-2 transition-transform duration-300" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+                </svg>
+            </button>
+            <div id="tools-panel" class="bg-white/90 p-4 rounded-lg shadow-lg mt-2 w-full hidden">
+                <div id="tools-output" class="mt-2"></div>
+
+                <!-- New Tab Content for Tools -->
+                <div id="tab-content-tools" class="mt-4">
+                    <h4 class="font-bold mb-2">Data Select</h4>
+                    <div class="space-y-2 mb-4">
+                        <div>
+                            <input type="radio" id="data-select-cross-section" name="data-select" value="cross-section" checked class="mr-2">
+                            <label for="data-select-cross-section" class="text-sm text-gray-700">Cross Section</label>
+                        </div>
+                        <div>
+                            <input type="radio" id="data-select-box" name="data-select" value="box" class="mr-2">
+                            <label for="data-select-box" class="text-sm text-gray-700">Box Select</label>
+                        </div>
+                    </div>
+
+                    <!-- Controls for Cross Section or Box Select -->
+                    <div id="cross-section-controls" class="mt-4">
+                        <button id="select-cross-section-btn" class="w-full bg-yellow-500 text-white font-bold py-2 px-4 rounded-md hover:bg-yellow-600 transition duration-300">Select Cross Section</button>
+                    </div>
+                    <div id="box-select-controls" class="mt-4" style="display:none;">
+                        <button id="select-box-btn" class="w-full bg-green-500 text-white font-bold py-2 px-4 rounded-md hover:bg-green-600 transition duration-300">Select Box</button>
+                    </div>
+
+                    <h4 class="font-bold mb-2 mt-6">Plot Type</h4>
+                    <div class="space-y-2">
+                        <div>
+                            <input type="radio" id="plot-type-cross-section" name="plot-type" value="cross-section" checked class="mr-2">
+                            <label for="plot-type-cross-section" class="text-sm text-gray-700">Depth Cross Section</label>
+                        </div>
+                        <div>
+                            <input type="radio" id="plot-type-mag-time" name="plot-type" value="mag-time" class="mr-2">
+                            <label for="plot-type-mag-time" class="text-sm text-gray-700">Magnitude vs Time</label>
+                        </div>
+                    </div>
+
+                    <div id="cross-section-content" class="plot-type-content"></div>
+                    <div id="mag-time-content" class="plot-type-content" style="display:none;">
+
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Event List Toggle -->
+        <div class="w-full mt-2">
+            <button id="event-list-toggle-btn" class="w-full bg-gray-700 text-white font-bold py-2 px-4 rounded-lg shadow hover:bg-gray-800 transition duration-300 flex items-center justify-between">
+                Event List
+                <svg id="event-list-toggle-icon" class="w-4 h-4 ml-2 transition-transform duration-300" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+                </svg>
+            </button>
+            <div id="event-list-panel" class="bg-white/90 p-4 rounded-lg shadow-lg mt-2 w-full hidden">
+                <a id="download-ogs-csv-link"
+                   href="#"
+                   class="text-blue-700 hover:underline font-semibold block mb-2"
+                   style="display:none;">
+                    Download OGS Data (CSV)
+                </a>
+                <div id="ogs-events-list" style="max-height:300px; overflow-y:auto;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Dialog -->
+    <div id="loading-dialog" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(255,255,255,0.7); z-index:9999; text-align:center; padding-top:20vh; font-size:2em; color:#333;">
+        Waiting for data request...
+    </div>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const toggleBtn = document.getElementById('tools-toggle-btn');
+        const toolsPanel = document.getElementById('tools-panel');
+        const icon = document.getElementById('tools-toggle-icon');
+        let expanded = false;
+        toggleBtn.addEventListener('click', function() {
+            expanded = !expanded;
+            toolsPanel.classList.toggle('hidden', !expanded);
+            icon.style.transform = expanded ? 'rotate(180deg)' : 'rotate(0deg)';
+        });
+
+        const eventListToggleBtn = document.getElementById('event-list-toggle-btn');
+        const eventListPanel = document.getElementById('event-list-panel');
+        const eventListIcon = document.getElementById('event-list-toggle-icon');
+        let eventListExpanded = false;
+        eventListToggleBtn.addEventListener('click', function() {
+            eventListExpanded = !eventListExpanded;
+            eventListPanel.classList.toggle('hidden', !eventListExpanded);
+            eventListIcon.style.transform = eventListExpanded ? 'rotate(180deg)' : 'rotate(0deg)';
+        });
+
+        // Plot type radio buttons functionality
+        const plotTypeRadios = document.querySelectorAll('input[name="plot-type"]');
+        const crossSectionControls = document.getElementById('cross-section-controls');
+        const magTimeControls = document.getElementById('mag-time-controls');
+
+        plotTypeRadios.forEach(radio => {
+            radio.addEventListener('change', function() {
+                // Only toggle the plot-type-specific controls, not the cross section controls
+                if (this.value === 'cross-section') {
+                    magTimeControls.classList.add('hidden');
+                } else {
+                    magTimeControls.classList.remove('hidden');
+                }
+            });
+        });
+
+        const dataSelectRadios = document.querySelectorAll('input[name="data-select"]');
+        const boxSelectControls = document.getElementById('box-select-controls');
+
+        dataSelectRadios.forEach(radio => {
+            radio.addEventListener('change', function() {
+                if (this.value === 'cross-section') {
+                    crossSectionControls.style.display = '';
+                    boxSelectControls.style.display = 'none';
+                } else if (this.value === 'box') {
+                    crossSectionControls.style.display = 'none';
+                    boxSelectControls.style.display = '';
+                }
+            });
+        });
+
+        // --- Download OGS CSV functionality ---
+        document.getElementById('download-ogs-csv-btn').addEventListener('click', function() {
+            // You must have a global variable ogsEventData containing the currently plotted OGS events
+            // and (optionally) a global variable polygonLayer for the polygon filter
+
+            if (!window.ogsEventData || !Array.isArray(window.ogsEventData) || window.ogsEventData.length === 0) {
+                alert('No OGS data to download.');
+                return;
+            }
+
+            // If a polygon is drawn, filter events within the polygon
+            let filteredEvents = window.ogsEventData;
+            if (window.polygonLayer && window.polygonLayer.getLatLngs) {
+                const polygon = window.polygonLayer;
+                filteredEvents = window.ogsEventData.filter(event => {
+                    if (!event.latitude || !event.longitude) return false;
+                    const latlng = L.latLng(event.latitude, event.longitude);
+                    return polygon.getBounds().contains(latlng) &&
+                        L.Polygon.prototype.isPrototypeOf(polygon) &&
+                        L.Polygon.prototype._containsPoint.call(polygon, polygon._map.latLngToLayerPoint(latlng));
+                });
+            }
+
+            if (filteredEvents.length === 0) {
+                alert('No OGS events within the polygon.');
+                return;
+            }
+
+            // Convert to CSV
+            const fields = Object.keys(filteredEvents[0]);
+            const csvRows = [
+                fields.join(','), // header
+                ...filteredEvents.map(row => fields.map(f => `"${(row[f] ?? '').toString().replace(/"/g, '""')}"`).join(','))
+            ];
+            const csvContent = csvRows.join('\r\n');
+
+            // Download
+            const blob = new Blob([csvContent], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'ogs_events.csv';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        });
+
+        // --- Download OGS CSV as a link in the event list ---
+        const downloadLink = document.getElementById('download-ogs-csv-link');
+        function updateDownloadLinkVisibility() {
+            if (window.ogsEventData && Array.isArray(window.ogsEventData) && window.ogsEventData.length > 0) {
+                downloadLink.style.display = '';
+            } else {
+                downloadLink.style.display = 'none';
+            }
+        }
+
+        downloadLink.addEventListener('click', function(e) {
+            e.preventDefault();
+            if (!window.ogsEventData || !Array.isArray(window.ogsEventData) || window.ogsEventData.length === 0) {
+                alert('No OGS data to download.');
+                return;
+            }
+
+            // If a polygon is drawn, filter events within the polygon
+            let filteredEvents = window.ogsEventData;
+            if (window.polygonLayer && window.polygonLayer.getLatLngs) {
+                const polygon = window.polygonLayer;
+                filteredEvents = window.ogsEventData.filter(event => {
+                    if (!event.latitude || !event.longitude) return false;
+                    const latlng = L.latLng(event.latitude, event.longitude);
+                    return polygon.getBounds().contains(latlng) &&
+                        L.Polygon.prototype.isPrototypeOf(polygon) &&
+                        L.Polygon.prototype._containsPoint.call(polygon, polygon._map.latLngToLayerPoint(latlng));
+                });
+            }
+
+            if (filteredEvents.length === 0) {
+                alert('No OGS events within the polygon.');
+                return;
+            }
+
+            // Convert to CSV
+            const fields = Object.keys(filteredEvents[0]);
+            const csvRows = [
+                fields.join(','), // header
+                ...filteredEvents.map(row => fields.map(f => `"${(row[f] ?? '').toString().replace(/"/g, '""')}"`).join(','))
+            ];
+            const csvContent = csvRows.join('\r\n');
+
+            // Download
+            const blob = new Blob([csvContent], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'ogs_events.csv';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        });
+
+        // Call this function whenever ogsEventData is updated
+        window.updateDownloadLinkVisibility = updateDownloadLinkVisibility;
+
+        if (window.updateDownloadLinkVisibility) window.updateDownloadLinkVisibility();
+    });
+    </script>
+</body>
+</html>
