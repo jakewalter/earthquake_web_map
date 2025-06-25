@@ -2,6 +2,7 @@
 
 A web application for visualizing Oklahoma and USGS earthquake data, plotting seismic stations, and exploring event details interactively.
 
+![Screenshot of earthquake website](earthquake_map_screenshot.png)
 ---
 
 ## Features
