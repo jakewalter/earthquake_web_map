@@ -116,4 +116,4 @@ Pull requests and issues are welcome! Please open an issue for bugs or feature r
 
 ## Contact
 
-For questions, contact [yourname@yourdomain.edu].
+For questions, contact Jake Walter
