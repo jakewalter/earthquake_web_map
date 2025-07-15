@@ -145,10 +145,18 @@ function renderEventList(ogsEvents) {
             : rawEventId; // Use the original ID if it doesn't start with 'ogs' or is not a string
         // --- END NEW ---
 
+        // Label event type: "Earthquake" or "Quarry" (robust to string/number/undefined)
+        let eventTypeLabel = 'Earthquake';
+        if (typeof event.isQuarry !== 'undefined') {
+            eventTypeLabel = event.isQuarry ? 'Quarry' : 'Earthquake';
+        } else if (typeof event.depth !== 'undefined' && !isNaN(Number(event.depth))) {
+            eventTypeLabel = (Number(event.depth) < 0.05) ? 'Quarry' : 'Earthquake';
+        }
+
         return `
             <div class="event-list-item" data-event-id="${displayEventId}" style="cursor:pointer;padding:4px 0;border-bottom:1px solid #eee;">
                 <strong>M ${!isNaN(mag) ? mag.toFixed(1) : "?"}</strong> &mdash; ${timeStr} (UTC)<br>
-                <span style="font-size:12px;color:#555;">${event.county || event.state || ""}</span>
+                <span style="font-size:12px;color:#555;">${event.county || event.state || ""} <span style="color:#888;">[${eventTypeLabel}]</span></span>
             </div>
         `;
     }).join('');
@@ -157,10 +165,10 @@ function renderEventList(ogsEvents) {
 // --- NEW --- Function to find a marker by its ID and interact with it
 function findAndOpenMarker(eventId) {
     if (!eventId) return;
-    
+
     let foundMarker = null;
     const layersToSearch = [layerGroups.past24Hours, layerGroups.past7Days, layerGroups.past30Days];
-    
+
     for (const group of layersToSearch) {
         group.eachLayer(marker => {
             if (marker.featureId === eventId) {
@@ -174,6 +182,23 @@ function findAndOpenMarker(eventId) {
         const zoomLevel = Math.max(map.getZoom() || 0, 10); // Pan in to at least zoom level 10
         map.setView(foundMarker.getLatLng(), zoomLevel);
         foundMarker.openPopup();
+    } else {
+        // If not found in marker layers, try to find the event in ogsEventData and pan to its coordinates
+        if (window.ogsEventData && Array.isArray(window.ogsEventData)) {
+            const event = window.ogsEventData.find(e => {
+                const rawEventId = e.event_id || e.objectid;
+                const markerFeatureId = rawEventId && typeof rawEventId === 'string' && rawEventId.startsWith('ogs')
+                    ? 'ok' + rawEventId.substring(3)
+                    : rawEventId;
+                return markerFeatureId == eventId;
+            });
+            if (event && !isNaN(event.latitude) && !isNaN(event.longitude)) {
+                const lat = Number(event.latitude);
+                const lng = Number(event.longitude);
+                const zoomLevel = Math.max(map.getZoom() || 0, 10);
+                map.setView([lat, lng], zoomLevel);
+            }
+        }
     }
 }
 
@@ -234,113 +259,192 @@ async function updateMap(showLoading = true) {
     }
 
     // --- Always continue with OGS/local data regardless of USGS status ---
+    let ogsApiFailed = false;
     try {
         const ogsUrl = `${LOCAL_API_URL}?start=${startStr}&end=${endStr}&minmag=${minMag}`;
+        console.log('[OGS LOCAL API] Fetching:', ogsUrl);
         const ogsResponse = await fetch(ogsUrl);
         if (!ogsResponse.ok) throw new Error(`OGS API responded with status: ${ogsResponse.status}`);
         ogsEventData = await ogsResponse.json();
-
-        // --- Sort by origintime ASCENDING so newest are plotted last ---
-        const sortedOgsEvents = [...ogsEventData].sort((a, b) => new Date(a.origintime) - new Date(b.origintime));
-
-        sortedOgsEvents.forEach(event => {
-            const rawEventId = event.event_id || event.objectid;
-            const markerFeatureId = rawEventId && typeof rawEventId === 'string' && rawEventId.startsWith('ogs')
-                ? 'ok' + rawEventId.substring(3)
-                : rawEventId;
-
-            const lat = Number(event.latitude);
-            const lng = Number(event.longitude);
-            const mag = Number(event.prefmag);
-            const depth = Number(event.depth);
-            if (isNaN(lat) || isNaN(lng)) return;
-
-            // Only plot OGS events INSIDE the polygon
-            //if (!pointInPolygon(lng, lat, oklahomaPolygonLngLat)) return;
-
-            // --- Categorize by event age ---
-            const eventTime = new Date(event.origintime);
-            const now = Date.now();
-            const timeDiff = now - eventTime.getTime();
-            const oneDay = 24 * 60 * 60 * 1000;
-            const sevenDays = 7 * oneDay;
-
-            let layerGroup, color;
-            if (timeDiff < oneDay) {
-                layerGroup = layerGroups.past24Hours;
-                color = 'red';
-            } else if (timeDiff < sevenDays) {
-                layerGroup = layerGroups.past7Days;
-                color = 'orange';
-            } else {
-                layerGroup = layerGroups.past30Days;
-                color = 'yellow';
-            }
-
-            const radius = 1.75 * (mag + 1.01) ** 1.6;
-
-            let marker;
-            let isQuarry = !isNaN(depth) && depth < 0.05;
-            if (isQuarry) {
-                // Diamond shape using SVG in a divIcon
-                marker = L.marker([lat, lng], {
-                    icon: L.divIcon({
-                        className: '',
-                        html: `<svg width="${radius*2}" height="${radius*2}" viewBox="0 0 ${radius*2} ${radius*2}">
-                            <polygon points="${radius},0 ${radius*2},${radius} ${radius},${radius*2} 0,${radius}" 
-                                style="fill:${color};stroke:black;stroke-width:1;opacity:0.7;" />
-                        </svg>`,
-                        iconSize: [radius*2, radius*2],
-                        iconAnchor: [radius, radius]
-                    })
-                });
-            } else {
-                marker = L.circleMarker([lat, lng], {
-                    radius: Math.max(radius, 6),
-                    color: 'black',
-                    fillColor: color,
-                    fillOpacity: 0.7,
-                    weight: 1
-                });
-            }
-
-            marker.featureId = markerFeatureId;
-
-            const utcTimeStr = eventTime.toISOString().replace('T', ' ').substring(0, 19);
-            const localTimeStr = getLocalTime(eventTime).toISOString().replace('T', ' ').substring(0, 19);
-            const usgsEventId = event.event_id || event.objectid;
-            const ogsdepth = !isNaN(depth) ? depth : "N/A";
-            const quarryLabel = isQuarry ? `<strong>Type:</strong> Quarry Event<br>` : '';
-
-            const popupContent = `<div style="width:300px; text-align: left; font-family:helvetica; font-size: 13px;">
-                <strong>Source:</strong> OGS<br>
-                <strong>Magnitude:</strong> ${!isNaN(mag) ? mag.toFixed(1) : "?"}<br>
-                <strong>Time (UTC):</strong> ${utcTimeStr}<br>
-                <strong>Time (Local):</strong> ${localTimeStr}<br>
-                <strong>Coordinates:</strong> ${lat.toFixed(4)}, ${lng.toFixed(4)}<br>
-                <strong>Location:</strong> ${event.county || event.state || ""}<br>
-                ${!isNaN(depth) ? `<strong>Depth:</strong> ${depth.toFixed(2)} km<br>` : ''}
-                ${quarryLabel}
-                <a href="https://earthquake.usgs.gov/earthquakes/eventpage/${markerFeatureId}/tellus" target="_blank" rel="noopener noreferrer">Did you feel this earthquake?</a>
-            </div>`;
-            marker.bindPopup(popupContent);
-
-            marker.addTo(layerGroup);
-        });
-        // --- END NEW ---
-
-        renderEventList(ogsEventData); // Render the list using global variable
-        window.ogsEventData = ogsEventData;
-        if (window.updateDownloadLinkVisibility) window.updateDownloadLinkVisibility();
-
     } catch (error) {
-        console.error("Error fetching or plotting OGS data:", error);
-        alert("Failed to load OGS earthquake data. Please check the console for details.");
-        renderEventList([]);
-        ogsEventData = null;
-    } finally {
-        if (showLoading) showLoadingDialog(false);
+        // If local API fails, fallback to OGS public API, but filter to only events inside Oklahoma polygon
+        ogsApiFailed = true;
+        try {
+            // --- OGS public API expects date format YYYYMMDDHHmm ---
+            function toOgsApiDateString(date) {
+                return date.getFullYear().toString() +
+                    (date.getMonth() + 1).toString().padStart(2, '0') +
+                    date.getDate().toString().padStart(2, '0') +
+                    date.getHours().toString().padStart(2, '0') +
+                    date.getMinutes().toString().padStart(2, '0');
+            }
+            const startDateObj = new Date(startStr);
+            const endDateObj = new Date(endStr);
+            const ogsStart = toOgsApiDateString(startDateObj);
+            const ogsEnd = toOgsApiDateString(endDateObj);
+            const ogsWebUrl = `https://ogsweb.ou.edu/api/earthquake?start=${ogsStart}&end=${ogsEnd}&mag=${minMag}&format=geojson`;
+            console.log('[OGS PUBLIC API] Fetching:', ogsWebUrl);
+            const ogsWebResponse = await fetch(ogsWebUrl);
+            if (!ogsWebResponse.ok) throw new Error(`OGS Web API responded with status: ${ogsWebResponse.status}`);
+            const geojson = await ogsWebResponse.json();
+            // Convert GeoJSON features to OGS event array for compatibility, but only those inside Oklahoma polygon
+            ogsEventData = geojson.features
+                .filter(f => {
+                    const g = f.geometry;
+                    return g && g.coordinates;
+                })
+                .map(f => {
+                    const p = f.properties;
+                    const g = f.geometry;
+                    // --- Robustly parse origintime/time to ensure event is within selected range ---
+                    let eventTime = p.origintime || p.time || null;
+                    // If eventTime is present, check if it is within the selected range
+                    if (eventTime) {
+                        const eventDate = new Date(eventTime);
+                        const startDateObj = new Date(startStr);
+                        const endDateObj = new Date(endStr);
+                        if (eventDate < startDateObj || eventDate > endDateObj) {
+                            return null; // Exclude events outside selected range
+                        }
+                    }
+                    // --- Robust depth extraction and quarry logic --- 
+                    let depthVal = null;
+                    // Prefer properties.depth if present and valid, else geometry.coordinates[2]
+                    if (typeof p.depth !== 'undefined' && p.depth !== null && !isNaN(parseFloat(p.depth))) {
+                        depthVal = parseFloat(p.depth);
+                    } else if (g && Array.isArray(g.coordinates) && g.coordinates.length > 2) {
+                        depthVal = parseFloat(g.coordinates[2]);
+                        if (isNaN(depthVal)) depthVal = null;
+                    }
+                    let isQuarry = false;
+                    if (typeof depthVal === 'number' && !isNaN(depthVal)) {
+                        isQuarry = (depthVal < 0.05);
+                    }
+                    return {
+                        objectid: p.objectid || null,
+                        origintime: p.origintime || p.time || null,
+                        prefmag: p.prefmag || p.mag || null,
+                        pmag_src: p.pmag_src || null,
+                        max_mmi: p.max_mmi || null,
+                        latitude: g && g.coordinates ? g.coordinates[1] : null,
+                        longitude: g && g.coordinates ? g.coordinates[0] : null,
+                        depth: depthVal,
+                        isQuarry: isQuarry,
+                        err_lon: p.err_lon || null,
+                        err_lat: p.err_lat || null,
+                        err_depth: p.err_depth || null,
+                        err_origintime: p.err_origintime || null,
+                        state: p.state || null,
+                        county: p.county || null,
+                        status: p.status || null,
+                        event_id: p.event_id || p.id || null
+                    };
+                })
+                .filter(e => e !== null); // Remove excluded events
+        } catch (webErr) {
+            console.error("Error fetching OGS data from both local API and ogsweb.ou.edu:", webErr);
+            alert("Failed to load OGS earthquake data from both local and public OGS APIs. Please check the console for details.");
+            renderEventList([]);
+            ogsEventData = null;
+            if (showLoading) showLoadingDialog(false);
+            return;
+        }
     }
+
+    // --- Sort by origintime ASCENDING so newest are plotted last ---
+    const sortedOgsEvents = [...ogsEventData].sort((a, b) => new Date(a.origintime) - new Date(b.origintime));
+
+    sortedOgsEvents.forEach(event => {
+        const rawEventId = event.event_id || event.objectid;
+        const markerFeatureId = rawEventId && typeof rawEventId === 'string' && rawEventId.startsWith('ogs')
+            ? 'ok' + rawEventId.substring(3)
+            : rawEventId;
+
+        const lat = Number(event.latitude);
+        const lng = Number(event.longitude);
+        const mag = Number(event.prefmag);
+        const depth = Number(event.depth);
+        if (isNaN(lat) || isNaN(lng)) return;
+
+        // Only plot OGS events INSIDE the polygon
+        //if (!pointInPolygon(lng, lat, oklahomaPolygonLngLat)) return;
+
+        // --- Categorize by event age ---
+        const eventTime = new Date(event.origintime);
+        const now = Date.now();
+        const timeDiff = now - eventTime.getTime();
+        const oneDay = 24 * 60 * 60 * 1000;
+        const sevenDays = 7 * oneDay;
+
+        let layerGroup, color;
+        if (timeDiff < oneDay) {
+            layerGroup = layerGroups.past24Hours;
+            color = 'red';
+        } else if (timeDiff < sevenDays) {
+            layerGroup = layerGroups.past7Days;
+            color = 'orange';
+        } else {
+            layerGroup = layerGroups.past30Days;
+            color = 'yellow';
+        }
+
+        const radius = 1.75 * (mag + 1.01) ** 1.6;
+
+        let marker;
+        let isQuarry = !isNaN(depth) && depth < 0.05;
+        if (isQuarry) {
+            // Diamond shape using SVG in a divIcon
+            marker = L.marker([lat, lng], {
+                icon: L.divIcon({
+                    className: '',
+                    html: `<svg width="${radius*2}" height="${radius*2}" viewBox="0 0 ${radius*2} ${radius*2}">
+                        <polygon points="${radius},0 ${radius*2},${radius} ${radius},${radius*2} 0,${radius}" 
+                            style="fill:${color};stroke:black;stroke-width:1;opacity:0.7;" />
+                    </svg>`,
+                    iconSize: [radius*2, radius*2],
+                    iconAnchor: [radius, radius]
+                })
+            });
+        } else {
+            marker = L.circleMarker([lat, lng], {
+                radius: Math.max(radius, 6),
+                color: 'black',
+                fillColor: color,
+                fillOpacity: 0.7,
+                weight: 1
+            });
+        }
+
+        marker.featureId = markerFeatureId;
+
+        const utcTimeStr = eventTime.toISOString().replace('T', ' ').substring(0, 19);
+        const localTimeStr = getLocalTime(eventTime).toISOString().replace('T', ' ').substring(0, 19);
+        const usgsEventId = event.event_id || event.objectid;
+        const ogsdepth = !isNaN(depth) ? depth : "N/A";
+        const quarryLabel = isQuarry ? `<strong>Type:</strong> Quarry Event<br>` : '';
+
+        const popupContent = `<div style="width:300px; text-align: left; font-family:helvetica; font-size: 13px;">
+            <strong>Source:</strong> OGS<br>
+            <strong>Magnitude:</strong> ${!isNaN(mag) ? mag.toFixed(1) : "?"}<br>
+            <strong>Time (UTC):</strong> ${utcTimeStr}<br>
+            <strong>Time (Local):</strong> ${localTimeStr}<br>
+            <strong>Coordinates:</strong> ${lat.toFixed(4)}, ${lng.toFixed(4)}<br>
+            <strong>Location:</strong> ${event.county || event.state || ""}<br>
+            ${!isNaN(depth) ? `<strong>Depth:</strong> ${depth.toFixed(2)} km<br>` : ''}
+            ${quarryLabel}
+            <a href="https://earthquake.usgs.gov/earthquakes/eventpage/${markerFeatureId}/tellus" target="_blank" rel="noopener noreferrer">Did you feel this earthquake?</a>
+        </div>`;
+        marker.bindPopup(popupContent);
+
+        marker.addTo(layerGroup);
+    });
+    // --- END NEW ---
+
+    renderEventList(ogsEventData); // Render the list using global variable
+    window.ogsEventData = ogsEventData;
+    if (window.updateDownloadLinkVisibility) window.updateDownloadLinkVisibility();
+
+    if (showLoading) showLoadingDialog(false);
 
     // --- NEW --- Global variable to store all plotted earthquakes
     window.allPlottedEarthquakes = [];
@@ -943,25 +1047,51 @@ downloadLink.addEventListener('click', function(e) {
 // --- NEW --- Function to fetch and plot stations from the local API
 async function fetchAndPlotStations() {
     console.log("fetchAndPlotStations called");
+    // Try local API first, then fallback to stations.json in root (same directory as index.html), then fallback to OGS public API
     const lat = 35.5, lon = -97.5, maxradius = 5;
     const url = `http://127.0.0.1:5000/api/stations?lat=${lat}&lon=${lon}&maxradius=${maxradius}`;
+    let stations = null;
     try {
         const response = await fetch(url);
-        const stations = await response.json();
-        stations.forEach(sta => {
-            const icon = L.divIcon({
-                className: 'station-icon',
-                html: '<svg height="15" width="15"><polygon points="7.5,0 15,15 0,15" style="fill:black;stroke:white;stroke-width:1" /></svg>',
-                iconSize: [15, 15],
-                iconAnchor: [7.5, 7.5]
-            });
-            L.marker([sta.latitude, sta.longitude], { icon })
-                .addTo(layerGroups.stations)
-                .bindPopup(`<b>${sta.Station}</b><br><a href="${sta.html}" target="_blank">Heliplot</a>`);
-        });
+        if (!response.ok) throw new Error('Local stations API failed');
+        stations = await response.json();
     } catch (e) {
-        console.error("Failed to fetch stations:", e);
+        console.warn("Failed to fetch stations from local API, trying stations.json in same directory as index.html...", e);
+        try {
+            // Use relative path to stations.json (should be in same directory as index.html)
+            // This works when served via HTTP, not via file://
+            let stationsJsonPath = 'stations.json';
+            // If the page is not at the root, adjust the path
+            if (!window.location.pathname.endsWith('/') && window.location.pathname.indexOf('/') !== -1) {
+                const basePath = window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/') + 1);
+                stationsJsonPath = basePath + 'stations.json';
+            }
+            console.log('[STATIONS FALLBACK] Fetching', stationsJsonPath);
+            const response = await fetch(stationsJsonPath);
+            if (!response.ok) throw new Error('stations.json not found or failed');
+            stations = await response.json();
+        } catch (jsonErr) {
+            console.warn("Failed to fetch stations.json, trying OGS public API as last resort...", jsonErr);
+            try {
+                alert("Failed to load stations from both local API and stations.json. No stations will be shown.");
+                stations = [];
+            } catch (publicErr) {
+                console.error("Failed to fetch stations from all sources:", publicErr);
+                stations = [];
+            }
+        }
     }
+    stations.forEach(sta => {
+        const icon = L.divIcon({
+            className: 'station-icon',
+            html: '<svg height="15" width="15"><polygon points="7.5,0 15,15 0,15" style="fill:black;stroke:white;stroke-width:1" /></svg>',
+            iconSize: [15, 15],
+            iconAnchor: [7.5, 7.5]
+        });
+        L.marker([sta.latitude, sta.longitude], { icon })
+            .addTo(layerGroups.stations)
+            .bindPopup(`<b>${sta.Station}</b><br><a href="${sta.html}" target="_blank">Heliplot</a>`);
+    });
 }
 
 
