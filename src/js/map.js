@@ -207,7 +207,7 @@ async function updateMap(showLoading = true) {
 
     let usgsEarthquakeData = null;
     try {
-        // Fetch USGS data (for map plotting)
+        // Fetch USGS data (for map plotting outside Oklahoma)
         const minLat = 25.0, maxLat = 45.0, minLng = -108.0, maxLng = -90.0;
         const usgsUrl = `${USGS_API_BASE_URL}?format=geojson&starttime=${startStr}&endtime=${endStr}&minlatitude=${minLat}&maxlatitude=${maxLat}&minlongitude=${minLng}&maxlongitude=${maxLng}&minmagnitude=${minMag}`;
         const usgsResponse = await fetch(usgsUrl);

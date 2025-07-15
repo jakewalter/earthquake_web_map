@@ -14,18 +14,9 @@ with open('config.json') as f:
 
 app = Flask(__name__)
 
-# Robust CORS setup for all routes and methods, including OPTIONS
-CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=False, allow_headers="*", methods=["GET", "POST", "OPTIONS"])
 
-# Global handler for all OPTIONS requests to ensure 200 OK and CORS headers
-@app.before_request
-def handle_all_options():
-    if request.method == 'OPTIONS':
-        response = app.make_response(('', 200))
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = request.headers.get('Access-Control-Request-Headers', '*')
-        return response
+# Simple CORS setup for all routes and methods, including OPTIONS
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 
 

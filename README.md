@@ -64,31 +64,52 @@ cp config.example.json config.json
 
 **Never commit your real `config.json`!**
 
-### 4. Run the Flask API
+
+### 4. Generate Static Data Files
+
+Run the provided scripts to fetch earthquake and station data and write them to JSON files:
 
 ```bash
-python earthquake_api.py
+python fetch_earthquakes.py
+python fetch_stations.py
 ```
 
-By default, the API will be available at `http://127.0.0.1:5000/api/earthquakes` and `http://127.0.0.1:5000/api/stations`.
+
+These will create `earthquakes.json` and `stations.json` in your project directory. You can schedule these scripts to run periodically using cron to keep the data up to date.
+
+#### Example: Setting up cron jobs
+
+Edit your crontab with:
+
+```bash
+crontab -e
+```
+
+Add the following lines to run the scripts automatically:
+
+```
+# Run fetch_earthquakes.py every minute
+* * * * * cd /path/to/earthquake_web_map && /usr/bin/python3 fetch_earthquakes.py
+
+# Run fetch_stations.py once per day at 2:00 AM
+0 2 * * * cd /path/to/earthquake_web_map && /usr/bin/python3 fetch_stations.py
+```
+
+Replace `/path/to/earthquake_web_map` with the actual path to your project directory.
 
 ### 5. Open the web app
 
-Open `src/index.html` in your browser.  
-If running on a server, configure your web server to serve the `src/` directory.
+Open `index.html` in your browser.  
+If running on a server, configure your web server to serve the project root directory (so it can access `index.html`, `earthquakes.json`, and `stations.json`).
 
 
 ---
 
-## API Endpoints for connecting with production postgresql
+## Static Data Workflow (No Live API Required)
 
-- `/api/earthquakes`  
-  Query OGS earthquake events.  
-  **Params:** `start`, `end`, `minmag`, `limit`
-
-- `/api/stations`  
-  Query OGS seismic stations (via IRIS).  
-  **Params:** `lat`, `lon`, `maxradius`, `hours`
+- Earthquake and station data are periodically fetched and written to `earthquakes.json` and `stations.json` using the provided scripts.
+- The web app loads these static files directly (no CORS issues, no backend server required for data access).
+- To update data, simply re-run the scripts or set up a cron job.
 
 ---
 
