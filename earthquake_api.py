@@ -13,7 +13,24 @@ with open('config.json') as f:
     config = json.load(f)
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})
+# Improved CORS setup for all routes and methods, including OPTIONS
+CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
+
+# Explicitly handle OPTIONS preflight requests for all routes
+@app.before_request
+def handle_options():
+    if request.method == 'OPTIONS':
+        resp = app.make_default_options_response()
+        headers = None
+        if hasattr(resp, 'headers'):
+            headers = resp.headers
+        else:
+            headers = resp
+        headers['Access-Control-Allow-Origin'] = '*'
+        headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+        headers['Access-Control-Allow-Headers'] = request.headers.get('Access-Control-Request-Headers', '*')
+        headers['Access-Control-Allow-Credentials'] = 'true'
+        return resp
 
 DEFAULT_TIME_OFFSET = 24  # hours
 
