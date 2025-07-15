@@ -1,6 +1,6 @@
 // --- CONFIGURATION ---
 const USGS_API_BASE_URL = "https://earthquake.usgs.gov/fdsnws/event/1/query";
-const LOCAL_API_URL = "http://127.0.0.1:5000/api/earthquakes";
+// const LOCAL_API_URL = "http://127.0.0.1:5000/api/earthquakes"; // REMOVED: No longer used
 
 // --- GLOBAL MAP VARIABLES ---
 let map;
@@ -259,101 +259,91 @@ async function updateMap(showLoading = true) {
     }
 
     // --- Always continue with OGS/local data regardless of USGS status ---
-    let ogsApiFailed = false;
+    // Only use OGS public API (no local API)
     try {
-        const ogsUrl = `${LOCAL_API_URL}?start=${startStr}&end=${endStr}&minmag=${minMag}`;
-        console.log('[OGS LOCAL API] Fetching:', ogsUrl);
-        const ogsResponse = await fetch(ogsUrl);
-        if (!ogsResponse.ok) throw new Error(`OGS API responded with status: ${ogsResponse.status}`);
-        ogsEventData = await ogsResponse.json();
-    } catch (error) {
-        // If local API fails, fallback to OGS public API
-        ogsApiFailed = true;
+        function toOgsApiDateString(date) {
+            return date.getFullYear().toString() +
+                (date.getMonth() + 1).toString().padStart(2, '0') +
+                date.getDate().toString().padStart(2, '0') +
+                date.getHours().toString().padStart(2, '0') +
+                date.getMinutes().toString().padStart(2, '0');
+        }
+        const startDateObj = new Date(startStr);
+        const endDateObj = new Date(endStr);
+        const ogsStart = toOgsApiDateString(startDateObj);
+        const ogsEnd = toOgsApiDateString(endDateObj);
+        const ogsWebUrl = `https://ogsweb.ou.edu/api/earthquake?start=${ogsStart}&end=${ogsEnd}&mag=${minMag}&format=geojson`;
+        console.log('[OGS PUBLIC API] Fetching:', ogsWebUrl);
+        let ogsWebResponse, geojson;
         try {
-            function toOgsApiDateString(date) {
-                return date.getFullYear().toString() +
-                    (date.getMonth() + 1).toString().padStart(2, '0') +
-                    date.getDate().toString().padStart(2, '0') +
-                    date.getHours().toString().padStart(2, '0') +
-                    date.getMinutes().toString().padStart(2, '0');
-            }
-            const startDateObj = new Date(startStr);
-            const endDateObj = new Date(endStr);
-            const ogsStart = toOgsApiDateString(startDateObj);
-            const ogsEnd = toOgsApiDateString(endDateObj);
-            const ogsWebUrl = `https://ogsweb.ou.edu/api/earthquake?start=${ogsStart}&end=${ogsEnd}&mag=${minMag}&format=geojson`;
-            console.log('[OGS PUBLIC API] Fetching:', ogsWebUrl);
-            let ogsWebResponse, geojson;
-            try {
-                ogsWebResponse = await fetch(ogsWebUrl);
-                if (!ogsWebResponse.ok) throw new Error(`OGS Web API responded with status: ${ogsWebResponse.status}`);
-                geojson = await ogsWebResponse.json();
-            } catch (fetchErr) {
-                // CORS, network, or other fetch error
-                console.error("Error fetching OGS public API:", fetchErr);
-                alert("Failed to load OGS earthquake data from both the local API and the public OGS API. This may be due to network issues, CORS restrictions, or the OGS server being unavailable. Please try again later or contact support if the problem persists.\n\nError: " + fetchErr);
-                renderEventList([]);
-                ogsEventData = null;
-                if (showLoading) showLoadingDialog(false);
-                return;
-            }
-            ogsEventData = geojson.features
-                .filter(f => {
-                    const g = f.geometry;
-                    return g && g.coordinates;
-                })
-                .map(f => {
-                    const p = f.properties;
-                    const g = f.geometry;
-                    let eventTime = p.origintime || p.time || null;
-                    if (eventTime) {
-                        const eventDate = new Date(eventTime);
-                        const startDateObj = new Date(startStr);
-                        const endDateObj = new Date(endStr);
-                        if (eventDate < startDateObj || eventDate > endDateObj) {
-                            return null;
-                        }
-                    }
-                    let depthVal = null;
-                    if (typeof p.depth !== 'undefined' && p.depth !== null && !isNaN(parseFloat(p.depth))) {
-                        depthVal = parseFloat(p.depth);
-                    } else if (g && Array.isArray(g.coordinates) && g.coordinates.length > 2) {
-                        depthVal = parseFloat(g.coordinates[2]);
-                        if (isNaN(depthVal)) depthVal = null;
-                    }
-                    let isQuarry = false;
-                    if (typeof depthVal === 'number' && !isNaN(depthVal)) {
-                        isQuarry = (depthVal < 0.05);
-                    }
-                    return {
-                        objectid: p.objectid || null,
-                        origintime: p.origintime || p.time || null,
-                        prefmag: p.prefmag || p.mag || null,
-                        pmag_src: p.pmag_src || null,
-                        max_mmi: p.max_mmi || null,
-                        latitude: g && g.coordinates ? g.coordinates[1] : null,
-                        longitude: g && g.coordinates ? g.coordinates[0] : null,
-                        depth: depthVal,
-                        isQuarry: isQuarry,
-                        err_lon: p.err_lon || null,
-                        err_lat: p.err_lat || null,
-                        err_depth: p.err_depth || null,
-                        err_origintime: p.err_origintime || null,
-                        state: p.state || null,
-                        county: p.county || null,
-                        status: p.status || null,
-                        event_id: p.event_id || p.id || null
-                    };
-                })
-                .filter(e => e !== null);
-        } catch (webErr) {
-            console.error("Error fetching OGS data from both local API and ogsweb.ou.edu:", webErr);
-            alert("Failed to load OGS earthquake data from both local and public OGS APIs. This may be due to network issues, CORS restrictions, or the OGS server being unavailable. Please try again later or contact support if the problem persists.\n\nError: " + webErr);
+            ogsWebResponse = await fetch(ogsWebUrl);
+            if (!ogsWebResponse.ok) throw new Error(`OGS Web API responded with status: ${ogsWebResponse.status}`);
+            geojson = await ogsWebResponse.json();
+        } catch (fetchErr) {
+            // CORS, network, or other fetch error
+            console.error("Error fetching OGS public API:", fetchErr);
+            alert("Failed to load OGS earthquake data from the public OGS API. This may be due to network issues, CORS restrictions, or the OGS server being unavailable. Please try again later or contact support if the problem persists.\n\nError: " + fetchErr);
             renderEventList([]);
             ogsEventData = null;
             if (showLoading) showLoadingDialog(false);
             return;
         }
+        ogsEventData = geojson.features
+            .filter(f => {
+                const g = f.geometry;
+                return g && g.coordinates;
+            })
+            .map(f => {
+                const p = f.properties;
+                const g = f.geometry;
+                let eventTime = p.origintime || p.time || null;
+                if (eventTime) {
+                    const eventDate = new Date(eventTime);
+                    const startDateObj = new Date(startStr);
+                    const endDateObj = new Date(endStr);
+                    if (eventDate < startDateObj || eventDate > endDateObj) {
+                        return null;
+                    }
+                }
+                let depthVal = null;
+                if (typeof p.depth !== 'undefined' && p.depth !== null && !isNaN(parseFloat(p.depth))) {
+                    depthVal = parseFloat(p.depth);
+                } else if (g && Array.isArray(g.coordinates) && g.coordinates.length > 2) {
+                    depthVal = parseFloat(g.coordinates[2]);
+                    if (isNaN(depthVal)) depthVal = null;
+                }
+                let isQuarry = false;
+                if (typeof depthVal === 'number' && !isNaN(depthVal)) {
+                    isQuarry = (depthVal < 0.05);
+                }
+                return {
+                    objectid: p.objectid || null,
+                    origintime: p.origintime || p.time || null,
+                    prefmag: p.prefmag || p.mag || null,
+                    pmag_src: p.pmag_src || null,
+                    max_mmi: p.max_mmi || null,
+                    latitude: g && g.coordinates ? g.coordinates[1] : null,
+                    longitude: g && g.coordinates ? g.coordinates[0] : null,
+                    depth: depthVal,
+                    isQuarry: isQuarry,
+                    err_lon: p.err_lon || null,
+                    err_lat: p.err_lat || null,
+                    err_depth: p.err_depth || null,
+                    err_origintime: p.err_origintime || null,
+                    state: p.state || null,
+                    county: p.county || null,
+                    status: p.status || null,
+                    event_id: p.event_id || p.id || null
+                };
+            })
+            .filter(e => e !== null);
+    } catch (webErr) {
+        console.error("Error fetching OGS data from ogsweb.ou.edu:", webErr);
+        alert("Failed to load OGS earthquake data from the public OGS API. This may be due to network issues, CORS restrictions, or the OGS server being unavailable. Please try again later or contact support if the problem persists.\n\nError: " + webErr);
+        renderEventList([]);
+        ogsEventData = null;
+        if (showLoading) showLoadingDialog(false);
+        return;
     }
 
     // --- Sort by origintime ASCENDING so newest are plotted last ---
@@ -550,14 +540,36 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- END REMOVE ---
 
 
-    // --- NEW --- Fetch and plot stations from the local API ---
+    // --- NEW --- Fetch and plot stations from stations.json only (local API removed) ---
     async function fetchAndPlotStations() {
         console.log("fetchAndPlotStations called");
-        const lat = 35.5, lon = -97.5, maxradius = 5;
-        const url = `http://127.0.0.1:5000/api/stations?lat=${lat}&lon=${lon}&maxradius=${maxradius}`;
+        // Only use stations.json in root (same directory as index.html)
+        let stations = null;
         try {
-            const response = await fetch(url);
-            const stations = await response.json();
+            // Use relative path to stations.json (should be in same directory as index.html)
+            // This works when served via HTTP, not via file://
+            let stationsJsonPath = 'stations.json';
+            // If the page is not at the root, adjust the path RELATIVE TO window.location.origin
+            // Always use an absolute path from the web root
+            let basePath = window.location.pathname;
+            if (!basePath.endsWith('/')) {
+                basePath = basePath.substring(0, basePath.lastIndexOf('/') + 1);
+            }
+            stationsJsonPath = basePath + 'stations.json';
+            // Remove duplicate slashes except after protocol
+            stationsJsonPath = stationsJsonPath.replace(/([^:]\/)\/+/g, '$1');
+            // Prepend origin to make an absolute URL
+            const stationsJsonUrl = window.location.origin + stationsJsonPath;
+            console.log('[STATIONS] Fetching', stationsJsonUrl);
+            const response = await fetch(stationsJsonUrl);
+            if (!response.ok) throw new Error('stations.json not found or failed');
+            stations = await response.json();
+        } catch (jsonErr) {
+            console.warn("Failed to fetch stations.json. No stations will be shown.", jsonErr);
+            alert("Failed to load stations from stations.json. No stations will be shown.");
+            stations = [];
+        }
+        if (stations && Array.isArray(stations)) {
             stations.forEach(sta => {
                 const icon = L.divIcon({
                     className: 'station-icon',
@@ -569,8 +581,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     .addTo(layerGroups.stations)
                     .bindPopup(`<b>${sta.Station}</b><br><a href="${sta.html}" target="_blank">Heliplot</a>`);
             });
-        } catch (e) {
-            console.error("Failed to fetch stations:", e);
         }
     }
 
@@ -1118,59 +1128,6 @@ downloadLink.addEventListener('click', function(e) {
 });
 
 
-
-// --- NEW --- Function to fetch and plot stations from the local API
-async function fetchAndPlotStations() {
-    console.log("fetchAndPlotStations called");
-    // Try local API first, then fallback to stations.json in root (same directory as index.html)
-    const lat = 35.5, lon = -97.5, maxradius = 5;
-    const url = `http://127.0.0.1:5000/api/stations?lat=${lat}&lon=${lon}&maxradius=${maxradius}`;
-    let stations = null;
-    try {
-        const response = await fetch(url);
-        if (!response.ok) throw new Error('Local stations API failed');
-        stations = await response.json();
-    } catch (e) {
-        console.warn("Failed to fetch stations from local API, trying stations.json in same directory as index.html...", e);
-        try {
-            // Use relative path to stations.json (should be in same directory as index.html)
-            // This works when served via HTTP, not via file://
-            let stationsJsonPath = 'stations.json';
-            // If the page is not at the root, adjust the path RELATIVE TO window.location.origin
-            // Always use an absolute path from the web root
-            let basePath = window.location.pathname;
-            if (!basePath.endsWith('/')) {
-                basePath = basePath.substring(0, basePath.lastIndexOf('/') + 1);
-            }
-            stationsJsonPath = basePath + 'stations.json';
-            // Remove duplicate slashes except after protocol
-            stationsJsonPath = stationsJsonPath.replace(/([^:]\/)\/+/, '$1');
-            // Prepend origin to make an absolute URL
-            const stationsJsonUrl = window.location.origin + stationsJsonPath;
-            console.log('[STATIONS FALLBACK] Fetching', stationsJsonUrl);
-            const response = await fetch(stationsJsonUrl);
-            if (!response.ok) throw new Error('stations.json not found or failed');
-            stations = await response.json();
-        } catch (jsonErr) {
-            console.warn("Failed to fetch stations.json. No stations will be shown.", jsonErr);
-            alert("Failed to load stations from both local API and stations.json. No stations will be shown.");
-            stations = [];
-        }
-    }
-    if (stations && Array.isArray(stations)) {
-        stations.forEach(sta => {
-            const icon = L.divIcon({
-                className: 'station-icon',
-                html: '<svg height="15" width="15"><polygon points="7.5,0 15,15 0,15" style="fill:black;stroke:white;stroke-width:1" /></svg>',
-                iconSize: [15, 15],
-                iconAnchor: [7.5, 7.5]
-            });
-            L.marker([sta.latitude, sta.longitude], { icon })
-                .addTo(layerGroups.stations)
-                .bindPopup(`<b>${sta.Station}</b><br><a href="${sta.html}" target="_blank">Heliplot</a>`);
-        });
-    }
-}
 
 
 // --- NEW ---
