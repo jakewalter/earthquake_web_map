@@ -104,7 +104,9 @@ def get_stations():
             stalat.append(sta.latitude)
             stalon.append(sta.longitude)
             names.append(sta.code)
-            htmls.append(f'http://wichita.ogs.ou.edu/eq/heliplot/{sta.code}.png')
+
+            # Use .format() instead of f-string for Python 3.4 compatibility
+            htmls.append('http://wichita.ogs.ou.edu/eq/heliplot/{}.png'.format(sta.code))
 
     df = pd.DataFrame({
         'Station': names,
@@ -117,4 +119,5 @@ def get_stations():
     return df.to_json(orient='records')
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    # Remove debug=True for Python 3.4 compatibility (optional, but safer)
+    app.run()
