@@ -13,17 +13,21 @@ with open('config.json') as f:
     config = json.load(f)
 
 app = Flask(__name__)
+
 # Robust CORS setup for all routes and methods, including OPTIONS
 CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=False, allow_headers="*", methods=["GET", "POST", "OPTIONS"])
 
-# Explicitly handle OPTIONS preflight requests for all routes (guaranteed 200 OK)
-@app.route('/api/earthquakes', methods=['OPTIONS'])
-def options_earthquakes():
-    return ('', 200)
+# Global handler for all OPTIONS requests to ensure 200 OK and CORS headers
+@app.before_request
+def handle_all_options():
+    if request.method == 'OPTIONS':
+        response = app.make_response(('', 200))
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = request.headers.get('Access-Control-Request-Headers', '*')
+        return response
 
-@app.route('/api/stations', methods=['OPTIONS'])
-def options_stations():
-    return ('', 200)
+
 
 DEFAULT_TIME_OFFSET = 24  # hours
 
