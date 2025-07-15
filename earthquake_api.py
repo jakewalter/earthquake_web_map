@@ -108,7 +108,7 @@ def get_stations():
             starttime=starttime, endtime=endtime
         )
     except Exception as e:
-        return jsonify({"error": f"IRIS query failed: {str(e)}"}), 500
+        return jsonify({"error": "IRIS query failed: {}".format(str(e))}), 500
 
     stalat = []
     stalon = []
