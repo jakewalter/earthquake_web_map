@@ -63,8 +63,11 @@ const setInitialDates = () => {
     const today = new Date();
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(today.getDate() - 30);
-    document.getElementById('end-date').value = today.toISOString().split('T')[0];
-    document.getElementById('start-date').value = thirtyDaysAgo.toISOString().split('T')[0];
+    // Set start date to 00:00:00 and end date to 23:59:59
+    const endDateStr = today.toISOString().split('T')[0];
+    const startDateStr = thirtyDaysAgo.toISOString().split('T')[0];
+    document.getElementById('start-date').value = startDateStr;
+    document.getElementById('end-date').value = endDateStr;
 };
 
 // --- PLOTTING LOGIC ---
@@ -215,8 +218,9 @@ async function updateMap(showLoading = true) {
     const minMag = document.getElementById('min-mag').value;
     const startDate = new Date(startInput);
     const endDate = new Date(endInput);
+    // Always set start to 00:00:00 and end to 23:59:59 UTC of the selected day
     startDate.setUTCHours(0, 0, 0, 0);
-    endDate.setUTCHours(23, 59, 59, 0);
+    endDate.setUTCHours(23, 59, 59, 999);
     const pad = n => n.toString().padStart(2, '0');
     const toApiDateString = date => {
         return date.getFullYear() + '-' +
@@ -261,17 +265,24 @@ async function updateMap(showLoading = true) {
     // --- Always continue with OGS/local data regardless of USGS status ---
     // Only use OGS public API (no local API)
     try {
-        function toOgsApiDateString(date) {
-            return date.getFullYear().toString() +
-                (date.getMonth() + 1).toString().padStart(2, '0') +
-                date.getDate().toString().padStart(2, '0') +
-                date.getHours().toString().padStart(2, '0') +
-                date.getMinutes().toString().padStart(2, '0');
+        function toOgsApiDateString(date, isEnd) {
+            // Always set end date to 23:59 for OGS API
+            const d = new Date(date);
+            if (isEnd) {
+                d.setHours(23, 59, 0, 0);
+            } else {
+                d.setHours(0, 0, 0, 0);
+            }
+            return d.getFullYear().toString() +
+                (d.getMonth() + 1).toString().padStart(2, '0') +
+                d.getDate().toString().padStart(2, '0') +
+                d.getHours().toString().padStart(2, '0') +
+                d.getMinutes().toString().padStart(2, '0');
         }
         const startDateObj = new Date(startStr);
         const endDateObj = new Date(endStr);
-        const ogsStart = toOgsApiDateString(startDateObj);
-        const ogsEnd = toOgsApiDateString(endDateObj);
+        const ogsStart = toOgsApiDateString(startDateObj, false);
+        const ogsEnd = toOgsApiDateString(endDateObj, true);
         const ogsWebUrl = `https://ogsweb.ou.edu/api/earthquake?start=${ogsStart}&end=${ogsEnd}&mag=${minMag}&format=geojson`;
         console.log('[OGS PUBLIC API] Fetching:', ogsWebUrl);
         let ogsWebResponse, geojson;
