@@ -182,9 +182,13 @@ function findAndOpenMarker(eventId) {
     }
 
     if (foundMarker) {
-        const zoomLevel = Math.max(map.getZoom() || 0, 10); // Pan in to at least zoom level 10
-        map.setView(foundMarker.getLatLng(), zoomLevel);
-        foundMarker.openPopup();
+        const targetLatLng = foundMarker.getLatLng();
+        const zoomLevel = Math.max(map.getZoom() || 0, 10);
+        // Always pan/zoom, then open popup after a short delay
+        map.setView(targetLatLng, zoomLevel, {animate: true});
+        setTimeout(() => {
+            foundMarker.openPopup();
+        }, 400);
     } else {
         // If not found in marker layers, try to find the event in ogsEventData and pan to its coordinates
         if (window.ogsEventData && Array.isArray(window.ogsEventData)) {
@@ -199,7 +203,7 @@ function findAndOpenMarker(eventId) {
                 const lat = Number(event.latitude);
                 const lng = Number(event.longitude);
                 const zoomLevel = Math.max(map.getZoom() || 0, 10);
-                map.setView([lat, lng], zoomLevel);
+                map.setView([lat, lng], zoomLevel, {animate: true});
             }
         }
     }
@@ -538,11 +542,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- END MOVE ---
 
     const overlayMaps = {
-        "<span style='color: red;'>Past 24 Hours</span>": layerGroups.past24Hours,
-        "<span style='color: orange;'>Past 7 Days</span>": layerGroups.past7Days,
-        "<span style='color: yellow;'>Past 30 Days</span>": layerGroups.past30Days,
-        "OGS seismic stations": layerGroups.stations,
-        "ANSS-authorized polygon": polygonLayer
+        "<span style='color: black;'>Past 24 Hours <span style='display:inline-block;vertical-align:middle;margin-left:6px;width:18px;height:14px;border:1px solid #888;background:red;opacity:0.7;'></span></span>": layerGroups.past24Hours,
+        "<span style='color: black;'>Past 7 Days <span style='display:inline-block;vertical-align:middle;margin-left:6px;width:18px;height:14px;border:1px solid #888;background:orange;opacity:0.7;'></span></span>": layerGroups.past7Days,
+        "<span style='color: black;'>Past 30 Days <span style='display:inline-block;vertical-align:middle;margin-left:6px;width:18px;height:14px;border:1px solid #888;background:yellow;opacity:0.7;'></span></span>": layerGroups.past30Days,
+        "<span style='color: black;'>OGS seismic stations</span>": layerGroups.stations,
+        "<span style='color: black;'>ANSS-authorized polygon</span>": polygonLayer
     };
     L.control.layers(null, overlayMaps, { position: 'bottomright', collapsed: false }).addTo(map);
 
@@ -674,13 +678,17 @@ document.addEventListener('DOMContentLoaded', () => {
             if (this.value === 'box') {
                 // Disable cross section plot type, enable mag vs time
                 crossSectionRadio.disabled = true;
-                crossSectionRadio.parentElement.classList.add('opacity-50');
+                if (crossSectionRadio.parentElement) {
+                    crossSectionRadio.parentElement.classList.add('opacity-50');
+                }
                 magTimeRadio.checked = true;
                 magTimeRadio.disabled = false;
             } else {
                 // Enable both plot types
                 crossSectionRadio.disabled = false;
-                crossSectionRadio.parentElement.classList.remove('opacity-50');
+                if (crossSectionRadio.parentElement) {
+                    crossSectionRadio.parentElement.classList.remove('opacity-50');
+                }
                 magTimeRadio.disabled = false;
             }
         });
@@ -702,9 +710,273 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    function onMapClick(e) {
-        console.log("Map clicked for cross section", e.latlng);
-        // ...rest of your code...
+    // --- Cross Section Selection Animation (restored from previous version) ---
+    let crossSectionActive = false;
+    let crossSectionStart = null;
+    let crossSectionLine = null;
+
+    function startCrossSectionSelection() {
+        crossSectionActive = true;
+        crossSectionStart = null;
+        if (crossSectionLine) {
+            map.removeLayer(crossSectionLine);
+            crossSectionLine = null;
+        }
+        map.getContainer().style.cursor = 'crosshair';
+        map.on('click', onCrossSectionClick);
+        map.on('mousemove', onCrossSectionMouseMove);
+
+        // Show custom 'This page says' notification at the top for 5 seconds
+        showTopNotification('Click twice to define the two ends of a line and then select the width of data to be included in the cross-section plot');
+    }
+
+    function onCrossSectionClick(e) {
+        if (!crossSectionActive) return;
+        if (!crossSectionStart) {
+            // First click: set start point
+            crossSectionStart = e.latlng;
+        } else {
+            // Second click: finalize line
+            crossSectionActive = false;
+            map.getContainer().style.cursor = '';
+            map.off('click', onCrossSectionClick);
+            map.off('mousemove', onCrossSectionMouseMove);
+            if (crossSectionLine) {
+                // Keep the line on map
+            }
+            // --- NEW: Show buffer selection UI on map ---
+            const start = crossSectionStart;
+            const end = e.latlng;
+            let bufferKm = 5;
+            let bufferLayer = null;
+            const toRad = deg => deg * Math.PI / 180;
+            // Helper: get rectangle polygon for buffer
+            function getBufferPolygon(start, end, widthKm) {
+                // Calculate perpendicular vector
+                const R = 6371;
+                const lat1 = toRad(start.lat), lng1 = toRad(start.lng);
+                const lat2 = toRad(end.lat), lng2 = toRad(end.lng);
+                // Midpoint for projection
+                const avgLat = (lat1 + lat2) / 2;
+                // Convert to x/y
+                const x1 = R * lng1 * Math.cos(avgLat);
+                const y1 = R * lat1;
+                const x2 = R * lng2 * Math.cos(avgLat);
+                const y2 = R * lat2;
+                // Direction vector
+                const dx = x2 - x1;
+                const dy = y2 - y1;
+                const length = Math.sqrt(dx*dx + dy*dy);
+                if (length === 0) return [];
+                // Perpendicular unit vector
+                const px = -dy / length;
+                const py = dx / length;
+                // Half width in km
+                const halfW = widthKm / 2;
+                // Four corners in x/y
+                const corners = [
+                    [x1 + px*halfW, y1 + py*halfW],
+                    [x2 + px*halfW, y2 + py*halfW],
+                    [x2 - px*halfW, y2 - py*halfW],
+                    [x1 - px*halfW, y1 - py*halfW]
+                ];
+                // Convert back to lat/lng
+                return corners.map(([x, y]) => {
+                    // Inverse projection
+                    const lat = y / R;
+                    const lng = x / (R * Math.cos(avgLat));
+                    return [lat * 180/Math.PI, lng * 180/Math.PI];
+                });
+            }
+            // Draw buffer polygon
+            function drawBuffer(widthKm) {
+                if (bufferLayer) map.removeLayer(bufferLayer);
+                const poly = getBufferPolygon(start, end, widthKm);
+                bufferLayer = L.polygon(poly, {color: 'blue', weight: 2, fillOpacity: 0.15, dashArray: '4,6'}).addTo(map);
+            }
+            drawBuffer(bufferKm);
+            // Add slider and confirm button to map UI
+            const uiDiv = document.createElement('div');
+            uiDiv.style.position = 'absolute';
+            uiDiv.style.top = '80px';
+            uiDiv.style.left = '50%';
+            uiDiv.style.transform = 'translateX(-50%)';
+            uiDiv.style.zIndex = '1000';
+            uiDiv.style.background = 'white';
+            uiDiv.style.border = '1px solid #888';
+            uiDiv.style.borderRadius = '8px';
+            uiDiv.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)';
+            uiDiv.style.padding = '12px 18px';
+            uiDiv.innerHTML = `
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <label for="cross-section-width-slider" style="font-weight:600;">Width (km):</label>
+                    <input type="range" id="cross-section-width-slider" min="1" max="50" value="5" step="1" style="width:180px;">
+                    <span id="cross-section-width-value">5</span>
+                    <button id="cross-section-confirm-btn" style="margin-left:18px;padding:6px 18px;background:#2563eb;color:white;border:none;border-radius:4px;font-weight:600;">Confirm</button>
+                </div>
+            `;
+            document.body.appendChild(uiDiv);
+            const slider = uiDiv.querySelector('#cross-section-width-slider');
+            const valueSpan = uiDiv.querySelector('#cross-section-width-value');
+            slider.addEventListener('input', function() {
+                bufferKm = Number(slider.value);
+                valueSpan.textContent = bufferKm;
+                drawBuffer(bufferKm);
+            });
+            uiDiv.querySelector('#cross-section-confirm-btn').onclick = function() {
+                // Remove UI and buffer
+                if (bufferLayer) map.removeLayer(bufferLayer);
+                document.body.removeChild(uiDiv);
+                // Now show the modal plot
+                // ...existing code for modal plot...
+                // Helper: distance from point to line segment (in km)
+                function pointToLineDistance(lat, lng, start, end) {
+                    const R = 6371;
+                    const lat1 = toRad(start.lat), lng1 = toRad(start.lng);
+                    const lat2 = toRad(end.lat), lng2 = toRad(end.lng);
+                    const lat0 = toRad(lat), lng0 = toRad(lng);
+                    const x1 = R * lng1 * Math.cos((lat1+lat2)/2);
+                    const y1 = R * lat1;
+                    const x2 = R * lng2 * Math.cos((lat1+lat2)/2);
+                    const y2 = R * lat2;
+                    const x0 = R * lng0 * Math.cos((lat1+lat2)/2);
+                    const y0 = R * lat0;
+                    const dx = x2 - x1;
+                    const dy = y2 - y1;
+                    const length2 = dx*dx + dy*dy;
+                    let t = ((x0-x1)*dx + (y0-y1)*dy) / (length2 || 1);
+                    t = Math.max(0, Math.min(1, t));
+                    const projX = x1 + t*dx;
+                    const projY = y1 + t*dy;
+                    const dist = Math.sqrt((x0-projX)**2 + (y0-projY)**2);
+                    return dist;
+                }
+                function projectOntoLine(lat, lng, start, end) {
+                    const R = 6371;
+                    const lat1 = toRad(start.lat), lng1 = toRad(start.lng);
+                    const lat2 = toRad(end.lat), lng2 = toRad(end.lng);
+                    const lat0 = toRad(lat), lng0 = toRad(lng);
+                    const x1 = R * lng1 * Math.cos((lat1+lat2)/2);
+                    const y1 = R * lat1;
+                    const x2 = R * lng2 * Math.cos((lat1+lat2)/2);
+                    const y2 = R * lat2;
+                    const x0 = R * lng0 * Math.cos((lat1+lat2)/2);
+                    const y0 = R * lat0;
+                    const dx = x2 - x1;
+                    const dy = y2 - y1;
+                    const length = Math.sqrt(dx*dx + dy*dy);
+                    let t = ((x0-x1)*dx + (y0-y1)*dy) / ((dx*dx + dy*dy) || 1);
+                    t = Math.max(0, Math.min(1, t));
+                    return t * length;
+                }
+                const selected = (window.allPlottedEarthquakes || []).filter(eq => {
+                    return pointToLineDistance(eq.lat, eq.lng, start, end) <= bufferKm;
+                });
+                if (!selected || selected.length === 0) {
+                    alert('No earthquakes within cross-section.');
+                    return;
+                }
+                const sorted = [...selected].sort((a, b) => projectOntoLine(a.lat, a.lng, start, end) - projectOntoLine(b.lat, b.lng, start, end));
+                const x = sorted.map(eq => projectOntoLine(eq.lat, eq.lng, start, end));
+                const y = sorted.map(eq => eq.depth);
+                const texts = sorted.map(eq =>
+                    `<b>Magnitude:</b> ${eq.mag ?? "?"}<br>` +
+                    `<b>Status:</b> ${eq.status ?? "?"}<br>` +
+                    `<b>Time (UTC):</b> ${eq.time ? new Date(eq.time).toISOString().replace('T',' ').substring(0,19) : "?"}<br>` +
+                    `<b>Coordinates:</b> ${eq.lat?.toFixed(4)}, ${eq.lng?.toFixed(4)}<br>` +
+                    `<b>Depth:</b> ${eq.depth ?? "?"} km<br>` +
+                    `<b>Location:</b> ${eq.place ?? "?"}<br>` +
+                    `<b>Event id:</b> ${eq.event_id ?? eq.objectid ?? "?"}`
+                );
+                // Modal
+                const modal = document.createElement('div');
+                modal.className = "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50";
+                modal.innerHTML = `
+                    <div class=\"bg-white rounded-lg p-4 shadow-lg max-w-2xl w-full flex flex-col\" style=\"width:90vw; min-width:320px; min-height:400px;\">
+                        <div id=\"cross-section-plot\" style=\"width:600px;height:350px;min-width:300px;min-height:250px;margin:0 auto;\"></div>
+                        <div class=\"flex justify-end gap-2 mt-4\" style=\"position:relative;z-index:2;\">
+                            <button id=\"open-crosssection-newwin\" class=\"bg-green-600 text-white px-4 py-2 rounded\">Open in New Window</button>
+                            <button id=\"close-crosssection-modal\" class=\"bg-blue-600 text-white px-4 py-2 rounded\">Close</button>
+                        </div>
+                    </div>
+                `;
+                document.body.appendChild(modal);
+                Plotly.newPlot('cross-section-plot', [{
+                    x: x,
+                    y: y,
+                    mode: 'markers',
+                    marker: {color: 'blue', size: 10, symbol: 'circle'},
+                    name: 'Depth',
+                    type: 'scatter',
+                    text: texts,
+                    hovertemplate: '%{text}<extra></extra>'
+                }], {
+                    title: 'Cross Section (Distance vs Depth)',
+                    xaxis: {title: 'Distance along cross-section (km)'},
+                    yaxis: {title: 'Depth (km)', autorange: 'reversed'},
+                    margin: {l: 60, r: 30, t: 50, b: 60},
+                    height: 400
+                }, {responsive: false});
+                document.getElementById('close-crosssection-modal').onclick = () => modal.remove();
+                document.getElementById('open-crosssection-newwin').onclick = () => {
+                    const win = window.open('', '_blank');
+                    win.document.write(`
+                        <html>
+                        <head>
+                            <title>Cross Section</title>
+                            <script src=\\"https://cdn.plot.ly/plotly-latest.min.js\\"></script>
+                            <style>
+                                body { margin:0; padding:0; }
+                            </style>
+                        </head>
+                        <body>
+                            <div id=\\"big-cross-section-plot\\" style=\\"width:100vw;height:90vh;\\"></div>
+                        </body>
+                        </html>
+                    `);
+                    win.document.close();
+                    function tryPlot() {
+                        const plotDiv = win.document.getElementById('big-cross-section-plot');
+                        if (win.Plotly && plotDiv) {
+                            win.Plotly.newPlot(
+                                plotDiv,
+                                [{
+                                    x: x,
+                                    y: y,
+                                    mode: 'markers',
+                                    marker: {color: 'blue', size: 10, symbol: 'circle'},
+                                    name: 'Depth',
+                                    type: 'scatter',
+                                    text: texts,
+                                    hovertemplate: '%{text}<extra></extra>'
+                                }],
+                                {
+                                    title: 'Cross Section (Distance vs Depth)',
+                                    xaxis: {title: 'Distance along cross-section (km)'},
+                                    yaxis: {title: 'Depth (km)', autorange: 'reversed'},
+                                    margin: {l: 60, r: 30, t: 50, b: 60},
+                                    autosize: true
+                                },
+                                {responsive: true}
+                            );
+                        } else {
+                            setTimeout(tryPlot, 50);
+                        }
+                    }
+                    tryPlot();
+                };
+            };
+        }
+    }
+
+    function onCrossSectionMouseMove(e) {
+        if (!crossSectionActive || !crossSectionStart) return;
+        const endLatLng = e.latlng;
+        if (window.crossSectionLine) {
+            map.removeLayer(window.crossSectionLine);
+        }
+        // Solid blue line (no dashArray)
+        window.crossSectionLine = L.polyline([crossSectionStart, endLatLng], {color: 'blue', weight: 3}).addTo(map);
     }
 });
 
@@ -716,31 +988,90 @@ let boxRectangle = null;
 function enableBoxSelect(map) {
     boxSelectActive = true;
     boxCorners = [];
-    if (boxRectangle) {
-        map.removeLayer(boxRectangle);
-        boxRectangle = null;
+    // Remove previous box selection rectangle
+    if (window.boxRectangle) {
+        map.removeLayer(window.boxRectangle);
+        window.boxRectangle = null;
+    }
+    // Remove previous cross-section line
+    if (window.crossSectionLine) {
+        map.removeLayer(window.crossSectionLine);
+        window.crossSectionLine = null;
     }
     map.getContainer().style.cursor = 'crosshair';
 
-    function onMapClick(e) {
+    // Show custom 'This page says' notification at the top for 5 seconds
+    showTopNotification('Box Select: Click and hold on one corner, then drag to the opposite corner and release to create the selection box.');
+// --- NEW --- Top notification function
+function showTopNotification(message) {
+    // Remove any existing notification
+    const old = document.getElementById('top-page-notification');
+    if (old) old.remove();
+    // Create notification div
+    const div = document.createElement('div');
+    div.id = 'top-page-notification';
+    div.style.position = 'fixed';
+    div.style.top = '0';
+    div.style.left = '50%';
+    div.style.transform = 'translateX(-50%)';
+    div.style.zIndex = '9999';
+    div.style.background = '#f9fafb';
+    div.style.border = '1px solid #888';
+    div.style.borderRadius = '8px';
+    div.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)';
+    div.style.padding = '14px 28px';
+    div.style.marginTop = '16px';
+    div.style.fontFamily = 'helvetica, arial, sans-serif';
+    div.style.fontSize = '16px';
+    div.style.color = '#222';
+    div.innerHTML = `<b>This page says</b><br><span style='font-size:15px;'>${message}</span>`;
+    document.body.appendChild(div);
+    setTimeout(() => {
+        div.remove();
+    }, 5000);
+}
+
+    let startLatLng = null;
+    let tempRectangle = null;
+
+    function onMouseDown(e) {
         if (!boxSelectActive) return;
-        boxCorners.push(e.latlng);
-        if (boxCorners.length === 2) {
-            map.getContainer().style.cursor = '';
-            boxSelectActive = false;
-            map.off('click', onMapClick);
-
-            // Draw rectangle
-            const bounds = L.latLngBounds(boxCorners[0], boxCorners[1]);
-            boxRectangle = L.rectangle(bounds, {color: 'purple', weight: 2, fillOpacity: 0.1}).addTo(map);
-
-            // Pass selected data to magnitude vs time plot
-            const selected = window.allPlottedEarthquakes.filter(eq => bounds.contains([eq.lat, eq.lng]));
-            plotMagnitudeVsTime(selected);
-        }
+        startLatLng = e.latlng;
+        map.dragging.disable();
+        map.on('mousemove', onMouseMove);
+        map.on('mouseup', onMouseUp);
     }
 
-    map.on('click', onMapClick);
+    function onMouseMove(e) {
+        if (!startLatLng) return;
+        const bounds = L.latLngBounds(startLatLng, e.latlng);
+        if (tempRectangle) {
+            map.removeLayer(tempRectangle);
+        }
+        tempRectangle = L.rectangle(bounds, {color: 'purple', weight: 2, fillOpacity: 0.1}).addTo(map);
+    }
+
+    function onMouseUp(e) {
+        if (!startLatLng) return;
+        map.getContainer().style.cursor = '';
+        boxSelectActive = false;
+        map.dragging.enable();
+        map.off('mousemove', onMouseMove);
+        map.off('mouseup', onMouseUp);
+        map.off('mousedown', onMouseDown);
+
+        const bounds = L.latLngBounds(startLatLng, e.latlng);
+        if (tempRectangle) {
+            map.removeLayer(tempRectangle);
+        }
+        boxRectangle = L.rectangle(bounds, {color: 'purple', weight: 2, fillOpacity: 0.1}).addTo(map);
+
+        // Pass selected data to magnitude vs time plot
+        const selected = window.allPlottedEarthquakes.filter(eq => bounds.contains([eq.lat, eq.lng]));
+        plotMagnitudeVsTime(selected);
+    }
+
+    map.on('mousedown', onMouseDown);
 }
 
 // Attach to the button
@@ -748,7 +1079,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const selectBoxBtn = document.getElementById('select-box-btn');
     if (selectBoxBtn) {
         selectBoxBtn.addEventListener('click', function() {
-            alert("Click twice for each diagonal corner of the desired box.");
+            alert("Box Select: Click and hold on one corner, then drag to the opposite corner and release to create the selection box.");
             if (window.map) {
                 enableBoxSelect(window.map);
             }
@@ -824,7 +1155,14 @@ function plotMagnitudeVsTime(events) {
         height: 350
     }, {responsive: false});
 
-    document.getElementById('close-magtime-modal').onclick = () => modal.remove();
+    document.getElementById('close-magtime-modal').onclick = () => {
+        modal.remove();
+        // Remove box selection rectangle if present
+        if (window.boxRectangle) {
+            window.map.removeLayer(window.boxRectangle);
+            window.boxRectangle = null;
+        }
+    };
 
     document.getElementById('open-magtime-newwin').onclick = () => {
         const win = window.open('', '_blank');

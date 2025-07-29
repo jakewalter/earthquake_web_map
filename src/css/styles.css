@@ -146,3 +146,8 @@ html, body {
 .leaflet-bottom.leaflet-right .leaflet-control-layers {
     margin-right: 60px !important; /* Adjust as needed for your zoom control width + gap */
 }
+
+.leaflet-control-layers {
+    background: #d6d6d6 !important;
+    border-radius: 6px !important;
+}

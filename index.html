@@ -21,7 +21,16 @@
         .leaflet-bottom.leaflet-right .leaflet-control-layers {
             margin-right: 60px !important; /* Adjust as needed for your zoom control width + gap */
             margin-bottom: -65px !important; /* Adjust as needed for your zoom control width + gap */
-
+        }
+        /* Add slight gray background and rounded corners to Leaflet layers control legend (bottom right) */
+        .leaflet-control-layers {
+            background: #f3f3f3 !important;
+            border-radius: 6px !important;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+        /* Custom radio button styling for checked state to ensure filled appearance */
+        input[type="radio"]:checked {
+            accent-color: #2563eb; /* Tailwind blue-600 for clear filled look */
         }
     </style>
 </head>
@@ -47,8 +56,7 @@
             </div>
             <button id="update-map-btn" class="w-full bg-blue-600 text-white font-bold py-2 px-4 rounded-md hover:bg-blue-700 transition duration-300 mt-2">Update Map</button>
         </div>
-
-        <!-- Data Citation Link and Box (move here) -->
+        <!-- Data Citation Link and Box (restored inside control panel) -->
         <div id="data-citation-container" style="margin-top: 8px;">
             <a href="#" id="data-citation-link" style="font-size: 13px;">Data Citation</a>
             <div id="data-citation-box" style="display: none; margin-top: 6px; background: #f8f8f8; border: 1px solid #ccc; border-radius: 4px; padding: 8px; font-size: 13px;">
@@ -60,9 +68,9 @@
     <!-- Top-right stack: Legend, Tools, and Tabs -->
     <div class="absolute top-3 right-3 z-10 flex flex-col items-end space-y-3 max-w-md">
         <!-- Map Legend -->
-        <div id="maplegend" class="border-2 border-gray-400 bg-white/90 rounded-lg p-4 text-sm w-full">
+        <div id="maplegend" class="border-2 border-gray-400 rounded-lg p-4 text-sm w-full" style="background: #f3f3f3;">
             <div class="font-bold mb-2">Legend</div>
-            <ul>
+            <ul style="background: #f3f3f3; border-radius: 6px; padding: 10px;">
                 <li class="flex items-center mb-1">
                     <span class="inline-block h-4 w-8 mr-2 border border-gray-400" style="background:red;opacity:0.7;"></span>
                     Past 24 Hours
@@ -75,15 +83,16 @@
                     <span class="inline-block h-4 w-8 mr-2 border border-gray-400" style="background:yellow;opacity:0.7;"></span>
                     Past 30 Days
                 </li>
+
                 <li class="flex items-center mb-1">
                     <span class="inline-block mr-2" style="width:70px;height:32px;position:relative;">
                         <svg width="70" height="32">
                             <!-- Magnitude 1 -->
-                            <circle cx="15" cy="16" r="5.7" fill="gray" fill-opacity="0.7" stroke="black" stroke-width="1"/>
+                            <circle cx="15" cy="16" r="5.7" fill="#f3f3f3" fill-opacity="0.7" stroke="black" stroke-width="1"/>
                             <!-- Magnitude 2 -->
-                            <circle cx="35" cy="16" r="10.2" fill="gray" fill-opacity="0.7" stroke="black" stroke-width="1"/>
+                            <circle cx="35" cy="16" r="10.2" fill="#f3f3f3" fill-opacity="0.7" stroke="black" stroke-width="1"/>
                             <!-- Magnitude 3 -->
-                            <circle cx="58" cy="16" r="15.0" fill="gray" fill-opacity="0.7" stroke="black" stroke-width="1"/>
+                            <circle cx="58" cy="16" r="15.0" fill="#f3f3f3" fill-opacity="0.7" stroke="black" stroke-width="1"/>
                         </svg>
                     </span>
                     Magnitude 1-3
@@ -91,7 +100,15 @@
                 <li class="flex items-center mb-1">
                     <span class="inline-block mr-2" style="width:18px;height:18px;">
                         <svg width="18" height="18" viewBox="0 0 18 18">
-                            <polygon points="9,0 18,9 9,18 0,9" style="fill:gray;stroke:black;stroke-width:1;opacity:0.7;" />
+                            <rect x="2" y="2" width="14" height="14" style="fill:#f3f3f3;stroke:black;stroke-width:1;opacity:0.7;" />
+                        </svg>
+                    </span>
+                    <span>Events - Outside Agencies</span>
+                </li>
+                <li class="flex items-center mb-1">
+                    <span class="inline-block mr-2" style="width:18px;height:18px;">
+                        <svg width="18" height="18" viewBox="0 0 18 18">
+                            <polygon points="9,0 18,9 9,18 0,9" style="fill:#f3f3f3;stroke:black;stroke-width:1;opacity:0.7;" />
                         </svg>
                     </span>
                     Quarry Event
@@ -134,13 +151,13 @@
 
                     <h4 class="font-bold mb-2 mt-6">Plot Type</h4>
                     <div class="space-y-2">
-                        <div>
+                        <div class="flex items-center mb-1">
                             <input type="radio" id="plot-type-cross-section" name="plot-type" value="cross-section" checked class="mr-2">
-                            <label for="plot-type-cross-section" class="text-sm text-gray-700">Depth Cross Section</label>
+                            <span class="text-sm text-black mr-2">Depth Cross Section</span>
                         </div>
-                        <div>
+                        <div class="flex items-center mb-1">
                             <input type="radio" id="plot-type-mag-time" name="plot-type" value="mag-time" class="mr-2">
-                            <label for="plot-type-mag-time" class="text-sm text-gray-700">Magnitude vs Time</label>
+                            <span class="text-sm text-black mr-2">Magnitude vs Time</span>
                         </div>
                     </div>
 
@@ -161,6 +178,7 @@
                 </svg>
             </button>
             <div id="event-list-panel" class="bg-white/90 p-4 rounded-lg shadow-lg mt-2 w-full hidden">
+                <div id="event-list-summary" class="mb-2 text-sm text-gray-700 font-semibold"></div>
                 <a id="download-ogs-csv-link"
                    href="#"
                    class="text-blue-700 hover:underline font-semibold block mb-2"
@@ -179,6 +197,22 @@
 
     <script>
     document.addEventListener('DOMContentLoaded', function() {
+        // Data Citation Link Toggle
+        const citationLink = document.getElementById('data-citation-link');
+        const citationBox = document.getElementById('data-citation-box');
+        if (citationLink && citationBox) {
+            citationLink.addEventListener('click', function(e) {
+                e.preventDefault();
+                if (citationBox.style.display === 'none' || citationBox.style.display === '') {
+                    citationBox.style.display = 'block';
+                    citationBox.style.maxHeight = '500px';
+                    citationBox.style.transition = 'max-height 0.3s ease';
+                } else {
+                    citationBox.style.maxHeight = '0';
+                    setTimeout(() => { citationBox.style.display = 'none'; }, 300);
+                }
+            });
+        }
         const toggleBtn = document.getElementById('tools-toggle-btn');
         const toolsPanel = document.getElementById('tools-panel');
         const icon = document.getElementById('tools-toggle-icon');
@@ -333,10 +367,29 @@
             URL.revokeObjectURL(url);
         });
 
+        // --- Event List Summary ---
+        function updateEventListSummary() {
+            const summaryDiv = document.getElementById('event-list-summary');
+            if (!summaryDiv) return;
+            let count = 0;
+            if (window.ogsEventData && Array.isArray(window.ogsEventData)) {
+                // Count events in last 30 days
+                const now = Date.now();
+                const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+                count = window.ogsEventData.filter(e => {
+                    const t = new Date(e.origintime || e.time);
+                    return now - t.getTime() <= thirtyDaysMs;
+                }).length;
+            }
+            summaryDiv.textContent = `${count} events in last 30 days`;
+        }
+
         // Call this function whenever ogsEventData is updated
         window.updateDownloadLinkVisibility = updateDownloadLinkVisibility;
+        window.updateEventListSummary = updateEventListSummary;
 
         if (window.updateDownloadLinkVisibility) window.updateDownloadLinkVisibility();
+        if (window.updateEventListSummary) window.updateEventListSummary();
     });
     </script>
 </body>
